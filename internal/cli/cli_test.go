@@ -110,7 +110,14 @@ const detail = `{"procurement":{"id":101,"name":"Snow clearing","type":"COMPETIT
 	"currentDeadline":{"date":"2026-11-01T11:00:00.000Z","type":"submission"},"total_value":2400000,"currency":"NOK",
 	"cpv_codes":{"main_cpv":"90620000","aditional_cpv":["90630000"]},"performance_places":["NO081"],"externalReferenceUrl":null,
 	"timeline":[{"name":"SUBMISSION","date":"2026-11-01T11:00:00.000Z","type":"deadline"}],
-	"lots":[{"id":7,"name":"Lot 1: North","description":"North side","duration_months":24,"estimated_value":1200000}],
+	"lots":[{"id":7,"name":"Lot 1: North","description":"North side","duration_months":24,"estimated_value":1200000,
+		"selectionCriteria":[{"title":"Company registration","eFormsType":"slc-suit-reg-trade","is_documentation_required":true,"description":"",
+			"smartDocRequest":{"id":1,"version":1,"docJSON":{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"A certificate"},{"type":"hardBreak"},{"type":"text","text":"not older than 6 months"}]}]}}}],
+		"awardCriteria":[{"title":"Price","awardCriteriaType":"price","percentage":40,"description":null},{"title":"Quality","awardCriteriaType":"quality","percentage":60,"description":null}],
+		"requirementsSmartDoc":{"id":2,"version":1,"docJSON":{"type":"doc","content":[
+			{"type":"heading","attrs":{"level":1},"content":[{"type":"text","text":"Documents"}]},
+			{"type":"bulletList","content":[{"type":"listItem","content":[{"type":"paragraph","content":[{"type":"text","text":"a plan"}]}]}]},
+			{"type":"request","attrs":{"type":"files","config":{"required":true}},"content":[{"type":"text","text":"Upload the plan"}]}]}}}],
 	"files":[
 		{"name":"b.xlsx","lastModified":"2026-10-14T10:00:00.000Z","orderIndex":1,"isDeleted":false,"key":"procurementAttachments/101/b"},
 		{"name":"gone.pdf","lastModified":"2026-10-14T10:00:00.000Z","orderIndex":2,"isDeleted":true,"key":"procurementAttachments/101/g"},
@@ -141,7 +148,7 @@ func newHarness(t *testing.T) *harness {
 		return ctltest.Answer{Body: fmt.Sprintf(`{"url":"%s/files/%s?X-Amz-Expires=300"}`, h.fake.URL(), form.Get("file_name"))}
 	})
 	h.fake.On("GET /files/a.pdf", http.StatusOK, "%PDF-1.7 made up")
-	h.fake.On("GET /files/b.xlsx", http.StatusOK, "PK made up sheet")
+	h.fake.On("GET /files/b.xlsx", http.StatusOK, "PK\x03\x04 made up sheet")
 	// A renewal hands out a new cookie every time, as Artifik does.
 	renewals := 0
 	h.fake.Handle("GET /api/ensure-session", func(c ctltest.Call) ctltest.Answer {
@@ -303,15 +310,47 @@ func TestAProcurementInFull(t *testing.T) {
 		"## About\n\n> Clearing\n",
 		"## Timeline\n\n- SUBMISSION: 2026-11-01T13:00:00+02:00\n",
 		"### Lot 1: North\n\nDuration: 24 months\nEstimated value: 1 200 000\n\n> North side\n",
+		"#### Qualification requirements\n\n1. Company registration (slc-suit-reg-trade), documentation required\n\n   > A certificate not older than 6 months\n",
+		"#### Award criteria\n\n- Price: 40 %, price\n- Quality: 60 %, quality\n",
+		"#### Specification\n\n> Documents\n> - a plan\n> [Supplier to give: upload files, required] Upload the plan\n",
 		// In the buyer's order, and without the deleted one.
 		"## Attachments\n\n1. a.pdf\n2. b.xlsx\n",
+		"## Questions\n\n1 public questions and answers. Read them with \"artifikctl questions 101\".\n",
 	} {
 		if !strings.Contains(stdout, want) {
 			t.Errorf("stdout lacks %q:\n%s", want, stdout)
 		}
 	}
-	if code != 0 || stderr != "" || h.fake.Calls[0].Query != "_routes=routes%2Fprocurements_.%24proc_id" {
+	if code != 0 || stderr != "" || h.fake.Calls[0].Query != "_routes=routes%2Fprocurements_.%24proc_id" || h.fake.Sent() != "GET /procurements/101.data, GET /procurements/101/qas.data" {
 		t.Errorf("exit = %d, stderr = %q, calls = %+v", code, stderr, h.fake.Calls)
+	}
+}
+
+func TestTheAddressOfAPageIsAnID(t *testing.T) {
+	h := newHarness(t)
+	for _, arg := range []string{"https://app.artifik.no/procurements/101", "https://app.artifik.no/procurements/101/details"} {
+		if code, _, stderr := h.run("", "procurement", arg, "--json"); code != 0 || h.fake.Calls[0].Path != "/procurements/101.data" {
+			t.Errorf("%s: exit = %d, stderr = %q", arg, code, stderr)
+		}
+	}
+	for _, arg := range []string{"https://elsewhere.invalid/procurements/101", "https://app.artifik.no/contracts/101", "../101"} {
+		if code, _, _ := h.run("", "procurement", arg); code != 2 || len(h.fake.Calls) != 0 {
+			t.Errorf("%s: exit = %d, calls = %+v", arg, code, h.fake.Calls)
+		}
+	}
+}
+
+func TestOneLotWithoutANameIsTheProcurementItself(t *testing.T) {
+	h := newHarness(t)
+	h.fake.On("GET /procurements/101.data", http.StatusOK, turbo(detailRoute, asAny(t, `{"procurement":{"id":101,"name":"Time sheets",
+		"description":"<p>The same text</p>","organization":{"name":"Made-up Agency"},"currentDeadline":{},
+		"lots":[{"id":7,"name":null,"description":"The same text","awardCriteria":[{"title":"Price","awardCriteriaType":"price","percentage":100}]}],"files":[]}}`)))
+	h.fake.On("GET /procurements/101/qas.data", http.StatusInternalServerError, ``)
+	code, stdout, stderr := h.run("", "procurement", "101")
+	if code != 0 || strings.Contains(stdout, "## Lots") || strings.Contains(stdout, "###") || strings.Count(stdout, "The same text") != 1 ||
+		!strings.Contains(stdout, "\n## Award criteria\n\n- Price: 100 %, price\n") || strings.Contains(stdout, "## Questions") ||
+		!strings.Contains(stderr, "Could not count the questions") {
+		t.Errorf("exit = %d, stderr = %q, stdout:\n%s", code, stderr, stdout)
 	}
 }
 
@@ -367,7 +406,7 @@ func TestDownloadAllNeverReplacesAFile(t *testing.T) {
 	code, stdout, stderr := h.run("", "download", "101", "--all", "--dir", dir, "--json")
 	var got savedFiles
 	ctltest.OneJSON(t, stdout, &got)
-	if code != 0 || len(got.Saved) != 2 || got.Saved[1].Path != filepath.Join(dir, "b.xlsx") {
+	if code != 0 || len(got.Saved) != 2 || got.Saved[1].Path != filepath.Join(dir, "b.xlsx") || got.Saved[1].ContentType != "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" {
 		t.Fatalf("exit = %d, stderr = %q, saved = %+v", code, stderr, got)
 	}
 	if data, _ := os.ReadFile(filepath.Join(dir, "a.pdf")); string(data) != "%PDF-1.7 made up" {

@@ -1,11 +1,11 @@
 ---
 name: artifikctl
-description: Find public procurements (anbud, konkurranser) published on Artifik, read one in full with its deadlines, lots, CPV codes and Q&A, and download its attachments (konkurransegrunnlag, kravspesifikasjon, prisskjema), with the artifikctl CLI. Also lists the procurements the user has bid on or been invited to there. Use when the user asks about tenders on Artifik or app.artifik.no, wants to search them, wants the tender documents, or asks what they have bid on there. Triggers - "Artifik", "app.artifik.no", "anbud på Artifik", "konkurranse i Artifik", "last ned konkurransegrunnlaget", "vedlegg til anbudet", "mine anbud i Artifik".
+description: Find public procurements (anbud, konkurranser) published on Artifik, read one in full with its deadlines, lots, CPV codes and Q&A, and download its attachments (konkurransegrunnlag, kravspesifikasjon, prisskjema), with the artifikctl CLI. Also lists the procurements the user has bid on or been invited to there. Use when the user asks about tenders on Artifik, gives a link to app.artifik.no (also from Doffin), wants to search them, wants the tender documents or the qualification requirements and award criteria, or asks what they have bid on there. Triggers - "Artifik", "app.artifik.no", "anbud på Artifik", "konkurranse i Artifik", "last ned konkurransegrunnlaget", "vedlegg til anbudet", "mine anbud i Artifik".
 ---
 
 # artifikctl
 
-`artifikctl` reads the procurements buyers publish on Artifik. Searching, reading and downloading need no login. Output is Markdown by default. Add `--json` to any read command when you need to process the result, and `--fields` to keep only the fields you need.
+`artifikctl` reads the procurements buyers publish on Artifik. Searching, reading and downloading need no login. The web page shows its "Last ned" buttons as disabled to a visitor who is not logged in, but the tool downloads every public attachment without a login: do not open a browser for it. Output is Markdown by default. Add `--json` to any read command when you need to process the result, and `--fields` to keep only the fields you need.
 
 `artifikctl schema` prints every command, flag and error kind as JSON. `artifikctl help <command>` describes one command.
 
@@ -26,9 +26,12 @@ Artifik's list is not in deadline order, and the order can change between runs. 
 ## Read one
 
 ```bash
-artifikctl procurement <procurement-id>     # deadlines, value, CPV codes, lots and the numbered attachments
+artifikctl procurement <procurement-id>     # deadlines, qualification requirements, award criteria, specification, attachments
+artifikctl procurement https://app.artifik.no/procurements/<procurement-id>   # a link to the page works as the id
 artifikctl questions <procurement-id>       # the public questions and answers
 ```
+
+`procurement` ends with how many public questions there are. Read them with `questions` before you assess a tender: the answers often change or explain a requirement. In the specification, a line that starts with "[Supplier to give: ...]" is something the supplier has to upload or answer in Artifik.
 
 The page of a procurement in Artifik is `https://app.artifik.no/procurements/<procurement-id>`. Give the user that link when they want to bid: bidding is done there, not with this tool.
 

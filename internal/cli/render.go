@@ -61,7 +61,8 @@ func (a *App) renderProcurements(w io.Writer, list procurementList, open bool) {
 	}
 }
 
-func (a *App) renderProcurement(w io.Writer, p *artifik.Procurement) {
+func (a *App) renderProcurement(w io.Writer, page procurementPage) {
+	p := page.Procurement
 	fmt.Fprintf(w, "# %s\n\n", oneLine(p.Name))
 	fmt.Fprintf(w, "id: %d\n", p.ID)
 	line(w, "Buyer", p.Buyer)
@@ -95,31 +96,80 @@ func (a *App) renderProcurement(w io.Writer, p *artifik.Procurement) {
 			fmt.Fprintf(w, "- %s: %s\n", oneLine(e.Name), a.local(e.Date))
 		}
 	}
-	if len(p.LotList) > 0 {
+	// One lot without a name is the procurement itself, and its parts are
+	// shown as the procurement's own.
+	if len(p.LotList) == 1 && p.LotList[0].Name == "" {
+		renderLot(w, p.LotList[0], "##")
+	} else if len(p.LotList) > 0 {
 		fmt.Fprintln(w, "\n## Lots")
-		for _, lot := range p.LotList {
-			fmt.Fprintf(w, "\n### %s\n\n", oneLine(lot.Name))
-			if lot.DurationMonths > 0 {
-				fmt.Fprintf(w, "Duration: %s months\n", strconv.FormatFloat(lot.DurationMonths, 'f', -1, 64))
+		for i, lot := range p.LotList {
+			name := oneLine(lot.Name)
+			if name == "" {
+				name = fmt.Sprintf("Lot %d", i+1)
 			}
-			if lot.EstimatedValue > 0 {
-				fmt.Fprintf(w, "Estimated value: %s\n", amount(lot.EstimatedValue))
-			}
-			if lot.Description != "" {
-				fmt.Fprintf(w, "\n%s\n", ctlkit.Quote(lot.Description))
-			}
+			fmt.Fprintf(w, "\n### %s\n", name)
+			renderLot(w, lot, "####")
 		}
 	}
 	fmt.Fprintln(w, "\n## Attachments")
 	fmt.Fprintln(w)
 	if len(p.Files) == 0 {
 		fmt.Fprintln(w, "None.")
-		return
+	} else {
+		for i, f := range p.Files {
+			fmt.Fprintf(w, "%d. %s\n", i+1, oneLine(f.Name))
+		}
+		fmt.Fprintf(w, "\nSave one with \"%s download %d <number>\", or all with \"%s download %d --all\".\n", Name, p.ID, Name, p.ID)
 	}
-	for i, f := range p.Files {
-		fmt.Fprintf(w, "%d. %s\n", i+1, oneLine(f.Name))
+	if page.Questions > 0 {
+		fmt.Fprintf(w, "\n## Questions\n\n%d public questions and answers. Read them with \"%s questions %d\".\n", page.Questions, Name, p.ID)
 	}
-	fmt.Fprintf(w, "\nSave one with \"%s download %d <number>\", or all with \"%s download %d --all\".\n", Name, p.ID, Name, p.ID)
+}
+
+// renderLot writes the parts of a lot under headings of the given level.
+func renderLot(w io.Writer, lot artifik.Lot, level string) {
+	if lot.DurationMonths > 0 || lot.EstimatedValue > 0 {
+		fmt.Fprintln(w)
+	}
+	if lot.DurationMonths > 0 {
+		fmt.Fprintf(w, "Duration: %s months\n", strconv.FormatFloat(lot.DurationMonths, 'f', -1, 64))
+	}
+	if lot.EstimatedValue > 0 {
+		fmt.Fprintf(w, "Estimated value: %s\n", amount(lot.EstimatedValue))
+	}
+	if lot.Description != "" {
+		fmt.Fprintf(w, "\n%s\n", ctlkit.Quote(lot.Description))
+	}
+	if len(lot.Qualification) > 0 {
+		fmt.Fprintf(w, "\n%s Qualification requirements\n\n", level)
+		for i, c := range lot.Qualification {
+			fmt.Fprintf(w, "%d. %s", i+1, oneLine(c.Title))
+			if c.Type != "" {
+				fmt.Fprintf(w, " (%s)", c.Type)
+			}
+			if c.DocumentationRequired {
+				fmt.Fprint(w, ", documentation required")
+			}
+			fmt.Fprintln(w)
+			if c.Description != "" {
+				fmt.Fprintf(w, "\n%s\n\n", indent(ctlkit.Quote(c.Description)))
+			}
+		}
+	}
+	if len(lot.Award) > 0 {
+		fmt.Fprintf(w, "\n%s Award criteria\n\n", level)
+		for _, c := range lot.Award {
+			fmt.Fprintf(w, "- %s: %s %%, %s\n", oneLine(c.Title), strconv.FormatFloat(c.Percentage, 'f', -1, 64), c.Type)
+		}
+	}
+	if lot.Specification != "" {
+		fmt.Fprintf(w, "\n%s Specification\n\n%s\n", level, ctlkit.Quote(lot.Specification))
+	}
+}
+
+// indent puts a block under a numbered list item.
+func indent(block string) string {
+	return "   " + strings.ReplaceAll(block, "\n", "\n   ")
 }
 
 func (a *App) renderQuestions(w io.Writer, id int, list questionList) {

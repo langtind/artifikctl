@@ -7,8 +7,10 @@ import (
 	"io"
 	"io/fs"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -26,7 +28,9 @@ const defaultLimit = 20
 // case as ctlkit matches them. Artifik takes them in upper case.
 var types = []string{"competition", "rfi", "information", "information_indicative", "dps", "qualification_announcement", "notice_of_intent", "planning"}
 
-var procurementArg = ctlkit.Arg{Name: "procurement-id", Required: true, ID: true, Help: "the id, as procurements prints it"}
+// procurementArg is not checked as an id by ctlkit, since it also takes the
+// address of the procurement's page. procurementID reads only the number.
+var procurementArg = ctlkit.Arg{Name: "procurement-id", Required: true, Help: "the id as procurements prints it, or the address of its page in Artifik"}
 
 // commands is the command table, the single description of the command
 // line. Add a command or a flag here and nowhere else.
@@ -292,7 +296,22 @@ func (a *App) procurement(ctx context.Context, c *ctlkit.Call) error {
 	if err != nil {
 		return unknownID(err, id)
 	}
-	return c.Print(p, func(w io.Writer) { a.renderProcurement(w, p) })
+	result := procurementPage{Procurement: p, Questions: -1}
+	// The questions are a page of their own at Artifik. Without them the
+	// procurement is still worth showing, so a failure is only a note.
+	if questions, err := a.Client.Questions(ctx, id); err == nil {
+		result.Questions = len(questions)
+	} else {
+		c.Note("Could not count the questions: %v", err)
+	}
+	return c.Print(result, func(w io.Writer) { a.renderProcurement(w, result) })
+}
+
+// procurementPage is what procurement prints. Questions is how many public
+// questions it has, or -1 when they could not be read.
+type procurementPage struct {
+	*artifik.Procurement
+	Questions int `json:"questions"`
 }
 
 type questionList struct {
@@ -388,7 +407,7 @@ func (a *App) downloadAll(ctx context.Context, c *ctlkit.Call, p *artifik.Procur
 		if err := writeNew(paths[i], data); err != nil {
 			return err
 		}
-		result.Saved = append(result.Saved, ctlkit.SavedFile{Path: paths[i], Bytes: len(data), ContentType: http.DetectContentType(data)})
+		result.Saved = append(result.Saved, ctlkit.SavedFile{Path: paths[i], Bytes: len(data), ContentType: ctlkit.ContentType(paths[i], data)})
 	}
 	return c.Print(result, func(w io.Writer) {
 		for _, saved := range result.Saved {
@@ -455,8 +474,18 @@ func (a *App) mine(ctx context.Context, c *ctlkit.Call) error {
 	return c.Print(list, func(w io.Writer) { a.renderMine(w, list) })
 }
 
+// pageAddress is the path of a procurement's page, as a link from Doffin
+// or from the web client has it.
+var pageAddress = regexp.MustCompile(`^/procurements/([0-9]+)(/.*)?$`)
+
 func procurementID(arg string) (int, error) {
-	id, err := strconv.Atoi(strings.TrimSpace(arg))
+	arg = strings.TrimSpace(arg)
+	if u, err := url.Parse(arg); err == nil && u.Host == artifik.Host && (u.Scheme == "https" || u.Scheme == "http") {
+		if m := pageAddress.FindStringSubmatch(u.Path); m != nil {
+			arg = m[1]
+		}
+	}
+	id, err := strconv.Atoi(arg)
 	if err != nil || id < 1 {
 		return 0, ctlkit.Usagef("a procurement id is a number, not %q", arg).WithHint(`run "%s procurements" to see the ids.`, Name)
 	}

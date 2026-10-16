@@ -78,11 +78,25 @@ type deadline struct {
 }
 
 type lotWire struct {
-	ID             int      `json:"id"`
-	Name           string   `json:"name"`
-	Description    string   `json:"description"`
-	DurationMonths *float64 `json:"duration_months"`
-	EstimatedValue *float64 `json:"estimated_value"`
+	ID                int      `json:"id"`
+	Name              string   `json:"name"`
+	Description       string   `json:"description"`
+	DurationMonths    *float64 `json:"duration_months"`
+	EstimatedValue    *float64 `json:"estimated_value"`
+	SelectionCriteria []struct {
+		Title                 string          `json:"title"`
+		EFormsType            string          `json:"eFormsType"`
+		DocumentationRequired bool            `json:"is_documentation_required"`
+		Description           string          `json:"description"`
+		SmartDocRequest       json.RawMessage `json:"smartDocRequest"`
+	} `json:"selectionCriteria"`
+	AwardCriteria []struct {
+		Title       string   `json:"title"`
+		Type        string   `json:"awardCriteriaType"`
+		Percentage  *float64 `json:"percentage"`
+		Description string   `json:"description"`
+	} `json:"awardCriteria"`
+	RequirementsSmartDoc json.RawMessage `json:"requirementsSmartDoc"`
 }
 
 // summaryWire is a procurement as the public list and the user's own list
@@ -204,10 +218,33 @@ type Event struct {
 
 type Lot struct {
 	ID             int     `json:"id"`
-	Name           string  `json:"name"`
+	Name           string  `json:"name,omitempty"`
 	DurationMonths float64 `json:"durationMonths,omitempty"`
 	EstimatedValue float64 `json:"estimatedValue,omitempty"`
-	Description    string  `json:"description,omitempty"`
+	// Description is left out when it is the same as the procurement's.
+	Description   string      `json:"description,omitempty"`
+	Qualification []Criterion `json:"qualification"`
+	Award         []Award     `json:"award"`
+	// Specification is the lot's requirements document as text, with a
+	// line for each thing the supplier is asked to give.
+	Specification string `json:"specification,omitempty"`
+}
+
+// Criterion is a qualification requirement a supplier has to meet.
+type Criterion struct {
+	Title string `json:"title"`
+	// Type is the eForms code, such as slc-sec-inf.
+	Type                  string `json:"type,omitempty"`
+	DocumentationRequired bool   `json:"documentationRequired"`
+	Description           string `json:"description,omitempty"`
+}
+
+// Award is a criterion the bids are weighed by.
+type Award struct {
+	Title       string  `json:"title"`
+	Type        string  `json:"type"`
+	Percentage  float64 `json:"percentage"`
+	Description string  `json:"description,omitempty"`
 }
 
 // File is an attachment of a procurement.
@@ -282,7 +319,25 @@ func (w procurementWire) procurement() *Procurement {
 		p.Timeline = append(p.Timeline, Event(e))
 	}
 	for _, l := range w.Lots {
-		lot := Lot{ID: l.ID, Name: l.Name, Description: text(l.Description)}
+		lot := Lot{ID: l.ID, Name: strings.TrimSpace(l.Name), Description: text(l.Description),
+			Qualification: []Criterion{}, Award: []Award{}, Specification: docText(rawDoc(l.RequirementsSmartDoc))}
+		if lot.Description == p.Description {
+			lot.Description = ""
+		}
+		for _, c := range l.SelectionCriteria {
+			criterion := Criterion{Title: c.Title, Type: c.EFormsType, DocumentationRequired: c.DocumentationRequired, Description: text(c.Description)}
+			if criterion.Description == "" {
+				criterion.Description = docText(rawDoc(c.SmartDocRequest))
+			}
+			lot.Qualification = append(lot.Qualification, criterion)
+		}
+		for _, a := range l.AwardCriteria {
+			award := Award{Title: a.Title, Type: a.Type, Description: text(a.Description)}
+			if a.Percentage != nil {
+				award.Percentage = *a.Percentage
+			}
+			lot.Award = append(lot.Award, award)
+		}
 		if l.DurationMonths != nil {
 			lot.DurationMonths = *l.DurationMonths
 		}
