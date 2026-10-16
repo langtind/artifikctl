@@ -29,7 +29,10 @@ Artifik's list is not in deadline order, and the order can change between runs. 
 artifikctl procurement <procurement-id>     # deadlines, qualification requirements, award criteria, specification, attachments
 artifikctl procurement https://app.artifik.no/procurements/<procurement-id>   # a link to the page works as the id
 artifikctl questions <procurement-id>       # the public questions and answers
+artifikctl document <procurement-id>        # the competition document: procedure, evaluation model, what to hand in
 ```
+
+Each qualification requirement has its text and, under "Documentation", what the supplier has to hand in to prove it. When an attachment or the specification points to "konkurransedetaljene" or "KGV punkt N", that is the competition document: read it with `document`, which can be 20 000 characters, so use `--json` and search the `text`. `procurement` says when there is one.
 
 `procurement` ends with how many public questions there are. Read them with `questions` before you assess a tender: the answers often change or explain a requirement. In the specification, a line that starts with "[Supplier to give: ...]" is something the supplier has to upload or answer in Artifik.
 
@@ -42,9 +45,10 @@ artifikctl download <procurement-id> 1                     # attachment 1, as pr
 artifikctl download <procurement-id> "Prisskjema.xlsx"     # or by its exact name
 artifikctl download <procurement-id> 1 --output spec.pdf   # under another name
 artifikctl download <procurement-id> --all --dir ./docs    # every attachment
+artifikctl download <procurement-id> 5 --dir ./docs        # one, into a directory
 ```
 
-Files are saved in the current directory under their own names. A file that exists is never replaced: `--all` stops before it fetches anything if one of them is there already, so give it an empty `--dir`.
+Files are saved under their own names, in the current directory or in `--dir`, which is made when it is not there. A file that exists is never replaced: `--all` stops before it fetches anything if one of them is there already, so give it an empty `--dir`.
 
 ## The user's own procurements
 

@@ -82,6 +82,13 @@ func (a *App) renderProcurement(w io.Writer, page procurementPage) {
 	if len(p.Places) > 0 {
 		line(w, "Places", strings.Join(p.Places, ", "))
 	}
+	if p.ContractStart != "" {
+		line(w, "Contract start", a.local(p.ContractStart))
+	}
+	if p.ReducesParticipants {
+		line(w, "Invites", "a selection of the qualified suppliers")
+	}
+	line(w, "How many are invited", p.LimitReason)
 	line(w, "External id", p.ExternalID)
 	line(w, "External page", p.ExternalURL)
 	line(w, "Page", p.URL)
@@ -121,6 +128,9 @@ func (a *App) renderProcurement(w io.Writer, page procurementPage) {
 		}
 		fmt.Fprintf(w, "\nSave one with \"%s download %d <number>\", or all with \"%s download %d --all\".\n", Name, p.ID, Name, p.ID)
 	}
+	if p.HasDocument {
+		fmt.Fprintf(w, "\n## Competition document\n\nThe rules, the evaluation model and what to hand in are in the competition document. Read it with \"%s document %d\".\n", Name, p.ID)
+	}
 	if page.Questions > 0 {
 		fmt.Fprintf(w, "\n## Questions\n\n%d public questions and answers. Read them with \"%s questions %d\".\n", page.Questions, Name, p.ID)
 	}
@@ -153,6 +163,9 @@ func renderLot(w io.Writer, lot artifik.Lot, level string) {
 			fmt.Fprintln(w)
 			if c.Description != "" {
 				fmt.Fprintf(w, "\n%s\n\n", indent(ctlkit.Quote(c.Description)))
+			}
+			if c.Documentation != "" {
+				fmt.Fprintf(w, "   Documentation:\n\n%s\n\n", indent(ctlkit.Quote(c.Documentation)))
 			}
 		}
 	}

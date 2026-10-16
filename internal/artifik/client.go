@@ -237,6 +237,9 @@ type Criterion struct {
 	Type                  string `json:"type,omitempty"`
 	DocumentationRequired bool   `json:"documentationRequired"`
 	Description           string `json:"description,omitempty"`
+	// Documentation is what the supplier has to hand in to show the
+	// requirement is met.
+	Documentation string `json:"documentation,omitempty"`
 }
 
 // Award is a criterion the bids are weighed by.
@@ -256,20 +259,28 @@ type File struct {
 // Procurement is one procurement in full.
 type Procurement struct {
 	Summary
-	Procedure   string   `json:"procedure,omitempty"`
-	Regulation  string   `json:"regulation,omitempty"`
-	Threshold   string   `json:"threshold,omitempty"`
-	Category    string   `json:"category,omitempty"`
-	TotalValue  float64  `json:"totalValue,omitempty"`
-	Currency    string   `json:"currency,omitempty"`
-	MainCPV     string   `json:"mainCpv,omitempty"`
-	OtherCPV    []string `json:"otherCpv,omitempty"`
-	Places      []string `json:"places,omitempty"`
-	ExternalID  string   `json:"externalId,omitempty"`
-	ExternalURL string   `json:"externalUrl,omitempty"`
-	Timeline    []Event  `json:"timeline"`
-	LotList     []Lot    `json:"lots"`
-	Files       []File   `json:"files"`
+	Procedure     string   `json:"procedure,omitempty"`
+	Regulation    string   `json:"regulation,omitempty"`
+	Threshold     string   `json:"threshold,omitempty"`
+	Category      string   `json:"category,omitempty"`
+	TotalValue    float64  `json:"totalValue,omitempty"`
+	Currency      string   `json:"currency,omitempty"`
+	MainCPV       string   `json:"mainCpv,omitempty"`
+	OtherCPV      []string `json:"otherCpv,omitempty"`
+	Places        []string `json:"places,omitempty"`
+	ExternalID    string   `json:"externalId,omitempty"`
+	ExternalURL   string   `json:"externalUrl,omitempty"`
+	ContractStart string   `json:"contractStart,omitempty"`
+	// ReducesParticipants says the buyer picks among the qualified
+	// suppliers when more qualify than it invites, and LimitReason says how.
+	ReducesParticipants bool   `json:"reducesParticipants"`
+	LimitReason         string `json:"limitReason,omitempty"`
+	// HasDocument says the procurement has a competition document, which
+	// Client.Document reads.
+	HasDocument bool    `json:"hasDocument"`
+	Timeline    []Event `json:"timeline"`
+	LotList     []Lot   `json:"lots"`
+	Files       []File  `json:"files"`
 }
 
 type procurementWire struct {
@@ -284,9 +295,13 @@ type procurementWire struct {
 		Main  string   `json:"main_cpv"`
 		Other []string `json:"aditional_cpv"`
 	} `json:"cpv_codes"`
-	PerformancePlaces []string `json:"performance_places"`
-	ExternalID        string   `json:"externalId"`
-	ExternalURL       *string  `json:"externalReferenceUrl"`
+	PerformancePlaces []string        `json:"performance_places"`
+	ExternalID        string          `json:"externalId"`
+	ExternalURL       *string         `json:"externalReferenceUrl"`
+	ContractStart     *string         `json:"estimatedContractStartDate"`
+	ReduceBySelection string          `json:"reduce_participants_by_selection_criteria"`
+	LimitReason       *string         `json:"suppliersLimitReason"`
+	InformationDoc    json.RawMessage `json:"procurementInformationSmartDoc"`
 	Timeline          []struct {
 		Name string `json:"name"`
 		Date string `json:"date"`
@@ -315,6 +330,14 @@ func (w procurementWire) procurement() *Procurement {
 	if w.ExternalURL != nil {
 		p.ExternalURL = *w.ExternalURL
 	}
+	if w.ContractStart != nil {
+		p.ContractStart = *w.ContractStart
+	}
+	if w.LimitReason != nil {
+		p.LimitReason = text(*w.LimitReason)
+	}
+	p.ReducesParticipants = w.ReduceBySelection == "__YES__"
+	p.HasDocument = docMarkdown(rawDoc(w.InformationDoc)) != ""
 	for _, e := range w.Timeline {
 		p.Timeline = append(p.Timeline, Event(e))
 	}
@@ -325,10 +348,8 @@ func (w procurementWire) procurement() *Procurement {
 			lot.Description = ""
 		}
 		for _, c := range l.SelectionCriteria {
-			criterion := Criterion{Title: c.Title, Type: c.EFormsType, DocumentationRequired: c.DocumentationRequired, Description: text(c.Description)}
-			if criterion.Description == "" {
-				criterion.Description = docText(rawDoc(c.SmartDocRequest))
-			}
+			criterion := Criterion{Title: c.Title, Type: c.EFormsType, DocumentationRequired: c.DocumentationRequired,
+				Description: text(c.Description), Documentation: docText(rawDoc(c.SmartDocRequest))}
 			lot.Qualification = append(lot.Qualification, criterion)
 		}
 		for _, a := range l.AwardCriteria {
@@ -376,6 +397,34 @@ func (c *Client) Procurement(ctx context.Context, id int) (*Procurement, error) 
 		return nil, ctlkit.NotFoundf("%s has no procurement %d", service, id)
 	}
 	return data.Procurement.procurement(), nil
+}
+
+// Document is the competition document of a procurement, as Artifik keeps
+// it in its own editor: the rules of the competition, what the buyer asks
+// for, and how the bids are weighed.
+type Document struct {
+	ID   int    `json:"id"`
+	Name string `json:"name"`
+	Text string `json:"text"`
+	Asks int    `json:"asks"`
+}
+
+// Document reads the competition document of a procurement. Text is
+// Markdown, and empty when the procurement has none.
+func (c *Client) Document(ctx context.Context, id int) (*Document, error) {
+	var data struct {
+		Procurement *procurementWire `json:"procurement"`
+	}
+	path := fmt.Sprintf("/procurements/%d.data", id)
+	if err := c.loader(ctx, path, "routes/procurements_.$proc_id", nil, false, &data); err != nil {
+		return nil, err
+	}
+	if data.Procurement == nil {
+		return nil, ctlkit.NotFoundf("%s has no procurement %d", service, id)
+	}
+	doc := rawDoc(data.Procurement.InformationDoc)
+	text := docMarkdown(doc)
+	return &Document{ID: id, Name: data.Procurement.Name, Text: text, Asks: strings.Count(text, "[Supplier to give:")}, nil
 }
 
 // Question is a question a supplier asked and the buyer answered in public.

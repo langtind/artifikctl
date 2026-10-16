@@ -109,6 +109,12 @@ const detail = `{"procurement":{"id":101,"name":"Snow clearing","type":"COMPETIT
 	"description":"<p>Clearing</p>","organization":{"id":"org-a","name":"Made-up Municipality"},
 	"currentDeadline":{"date":"2026-11-01T11:00:00.000Z","type":"submission"},"total_value":2400000,"currency":"NOK",
 	"cpv_codes":{"main_cpv":"90620000","aditional_cpv":["90630000"]},"performance_places":["NO081"],"externalReferenceUrl":null,
+	"estimatedContractStartDate":"2027-01-31T23:00:00.000Z","reduce_participants_by_selection_criteria":"__YES__","suppliersLimitReason":"See 5.2",
+	"procurementInformationSmartDoc":{"id":3,"version":1,"docJSON":{"type":"doc","content":[
+		{"type":"heading","attrs":{"level":1},"content":[{"type":"text","text":"6 Evaluation"}]},
+		{"type":"heading","attrs":{"level":2},"content":[{"type":"text","text":"6.3 Weighting"}]},
+		{"type":"paragraph","content":[{"type":"text","text":"Quality counts "},{"type":"text","marks":[{"type":"bold"}],"text":"most"},{"type":"text","text":"."}]},
+		{"type":"request","attrs":{"type":"files","config":{"required":false}},"content":[{"type":"text","text":"Upload references"}]}]}},
 	"timeline":[{"name":"SUBMISSION","date":"2026-11-01T11:00:00.000Z","type":"deadline"}],
 	"lots":[{"id":7,"name":"Lot 1: North","description":"North side","duration_months":24,"estimated_value":1200000,
 		"selectionCriteria":[{"title":"Company registration","eFormsType":"slc-suit-reg-trade","is_documentation_required":true,"description":"",
@@ -306,11 +312,14 @@ func TestAProcurementInFull(t *testing.T) {
 	code, stdout, stderr := h.run("", "procurement", "101")
 	for _, want := range []string{
 		"# Snow clearing\n\nid: 101\nBuyer: Made-up Municipality\n",
-		"Estimated value: 2 400 000 NOK\nMain CPV: 90620000\nOther CPV: 90630000\nPlaces: NO081\nPage: https://app.artifik.no/procurements/101\n",
+		"Estimated value: 2 400 000 NOK\nMain CPV: 90620000\nOther CPV: 90630000\nPlaces: NO081\n",
+		"How many are invited: See 5.2\nPage: https://app.artifik.no/procurements/101\n",
 		"## About\n\n> Clearing\n",
 		"## Timeline\n\n- SUBMISSION: 2026-11-01T13:00:00+02:00\n",
 		"### Lot 1: North\n\nDuration: 24 months\nEstimated value: 1 200 000\n\n> North side\n",
-		"#### Qualification requirements\n\n1. Company registration (slc-suit-reg-trade), documentation required\n\n   > A certificate not older than 6 months\n",
+		"#### Qualification requirements\n\n1. Company registration (slc-suit-reg-trade), documentation required\n   Documentation:\n\n   > A certificate not older than 6 months\n",
+		"Contract start: 2027-02-01T01:00:00+02:00\nInvites: a selection of the qualified suppliers\nHow many are invited: See 5.2\n",
+		"## Competition document\n\nThe rules, the evaluation model and what to hand in are in the competition document. Read it with \"artifikctl document 101\".\n",
 		"#### Award criteria\n\n- Price: 40 %, price\n- Quality: 60 %, quality\n",
 		"#### Specification\n\n> Documents\n> - a plan\n> [Supplier to give: upload files, required] Upload the plan\n",
 		// In the buyer's order, and without the deleted one.
@@ -366,6 +375,21 @@ func TestAnUnknownProcurementIsNotFound(t *testing.T) {
 	}
 }
 
+func TestTheCompetitionDocument(t *testing.T) {
+	h := newHarness(t)
+	code, stdout, _ := h.run("", "document", "101")
+	want := "# Competition document: Snow clearing\n\n> ## 6 Evaluation\n>\n> ### 6.3 Weighting\n>\n> Quality counts most.\n>\n> [Supplier to give: upload files] Upload references\n"
+	if code != 0 || stdout != want {
+		t.Errorf("exit = %d, stdout = %q", code, stdout)
+	}
+	_, stdout, _ = h.run("", "document", "101", "--json")
+	var doc artifik.Document
+	ctltest.OneJSON(t, stdout, &doc)
+	if doc.ID != 101 || doc.Asks != 1 || !strings.HasPrefix(doc.Text, "## 6 Evaluation\n\n### 6.3") {
+		t.Errorf("doc = %+v", doc)
+	}
+}
+
 func TestQuestions(t *testing.T) {
 	code, stdout, _ := newHarness(t).run("", "questions", "101")
 	want := "# Questions about procurement 101\n\n## Salt\n\nPublished: 2026-10-15T10:00:00+02:00\n\nQuestion:\n\n> Which salt?\n\nAnswer:\n\n> Any.\n"
@@ -398,10 +422,22 @@ func TestDownloadOneByNumberOrName(t *testing.T) {
 	if code, _, _ := h.run("", "download", "101"); code != 2 {
 		t.Errorf("neither a file nor --all: exit = %d", code)
 	}
+
+	// --dir takes one file too, and is made when it is not there.
+	dir := filepath.Join(t.TempDir(), "new", "sub")
+	code, stdout, stderr = h.run("", "download", "101", "2", "--dir", dir, "--json")
+	var saved ctlkit.SavedFile
+	ctltest.OneJSON(t, stdout, &saved)
+	if code != 0 || saved.Path != filepath.Join(dir, "b.xlsx") {
+		t.Errorf("--dir: exit = %d, stderr = %q, saved = %+v", code, stderr, saved)
+	}
+	if code, _, _ := h.run("", "download", "101", "2", "--dir", dir, "--output", "x.xlsx"); code != 2 {
+		t.Errorf("--dir and --output: exit = %d", code)
+	}
 }
 
 func TestDownloadAllNeverReplacesAFile(t *testing.T) {
-	dir := t.TempDir()
+	dir := filepath.Join(t.TempDir(), "docs")
 	h := newHarness(t)
 	code, stdout, stderr := h.run("", "download", "101", "--all", "--dir", dir, "--json")
 	var got savedFiles

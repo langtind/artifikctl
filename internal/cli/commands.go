@@ -86,6 +86,14 @@ func (a *App) commands() []ctlkit.Command {
 			Run:     a.procurement,
 		},
 		{
+			Name:    "document",
+			Summary: "Show the competition document of a procurement: its rules, requirements and evaluation model",
+			Long:    `Artifik keeps the competition document (konkurransegrunnlaget) in its own editor, not as an attachment. It holds the procedure, how many are invited, what the supplier has to hand in, and how the bids are weighed. A line that starts with "[Supplier to give: ...]" is something the supplier uploads or answers in Artifik. It can be long: an agent should read it with --json and search the text.`,
+			Args:    []ctlkit.Arg{procurementArg},
+			Flags:   []ctlkit.Flag{ctlkit.JSONFlag, ctlkit.FieldsFlag},
+			Run:     a.document,
+		},
+		{
 			Name:    "questions",
 			Summary: "Show the public questions and answers of a procurement",
 			Args:    []ctlkit.Arg{procurementArg},
@@ -95,11 +103,11 @@ func (a *App) commands() []ctlkit.Command {
 		{
 			Name:    "download",
 			Summary: "Save an attachment of a procurement, or all of them",
-			Long:    `Give the attachment by its number or its name, as procurement lists them. --all saves every attachment into --dir, and stops before it fetches anything if one of the files is there already. A file that exists is never replaced.`,
+			Long:    `Give the attachment by its number or its name, as procurement lists them. --all saves every attachment. --dir says where, and is made when it is not there. --all stops before it fetches anything if one of the files is there already. A file that exists is never replaced.`,
 			Args:    []ctlkit.Arg{procurementArg, {Name: "attachment", Help: "the number or the name of the attachment"}},
 			Flags: []ctlkit.Flag{
 				{Name: "all", Kind: ctlkit.Bool, Help: "save every attachment"},
-				{Name: "dir", Kind: ctlkit.String, Value: "path", Default: ".", Help: "where --all saves the files"},
+				{Name: "dir", Kind: ctlkit.String, Value: "path", Default: ".", Help: "the directory to save into, made when it is not there"},
 				ctlkit.OutputFlag, ctlkit.JSONFlag,
 			},
 			Run: a.download,
@@ -307,6 +315,25 @@ func (a *App) procurement(ctx context.Context, c *ctlkit.Call) error {
 	return c.Print(result, func(w io.Writer) { a.renderProcurement(w, result) })
 }
 
+func (a *App) document(ctx context.Context, c *ctlkit.Call) error {
+	id, err := procurementID(c.Arg(0))
+	if err != nil {
+		return err
+	}
+	doc, err := a.Client.Document(ctx, id)
+	if err != nil {
+		return unknownID(err, id)
+	}
+	return c.Print(doc, func(w io.Writer) {
+		fmt.Fprintf(w, "# Competition document: %s\n\n", oneLine(doc.Name))
+		if doc.Text == "" {
+			fmt.Fprintln(w, "This procurement has none in Artifik. Look among its attachments.")
+			return
+		}
+		fmt.Fprintln(w, ctlkit.Quote(doc.Text))
+	})
+}
+
 // procurementPage is what procurement prints. Questions is how many public
 // questions it has, or -1 when they could not be read.
 type procurementPage struct {
@@ -349,8 +376,8 @@ func (a *App) download(ctx context.Context, c *ctlkit.Call) error {
 		return ctlkit.Usagef("give the attachment by its number or its name, or --all").WithHint(`run "%s procurement %d" to see the attachments.`, Name, id)
 	case all && c.Given("output"):
 		return ctlkit.Usagef("--all saves into --dir, and takes no --output")
-	case !all && c.Given("dir"):
-		return ctlkit.Usagef("--dir is for --all. Give one file a path with --output")
+	case c.Given("output") && c.Given("dir"):
+		return ctlkit.Usagef("give the file a path with --output, or a directory with --dir, not both")
 	}
 
 	p, err := a.Client.Procurement(ctx, id)
@@ -365,55 +392,68 @@ func (a *App) download(ctx context.Context, c *ctlkit.Call) error {
 		if err != nil {
 			return err
 		}
-		data, err := a.Client.Download(ctx, id, file.Name)
+		if !c.Given("dir") {
+			data, err := a.Client.Download(ctx, id, file.Name)
+			if err != nil {
+				return err
+			}
+			return c.Save(data, file.Name)
+		}
+		saved, err := a.saveInto(ctx, c.String("dir"), p.ID, []artifik.File{file})
 		if err != nil {
 			return err
 		}
-		return c.Save(data, file.Name)
+		return c.Print(saved[0], func(w io.Writer) { renderSaved(w, saved) })
 	}
-	return a.downloadAll(ctx, c, p)
+	saved, err := a.saveInto(ctx, c.String("dir"), p.ID, p.Files)
+	if err != nil {
+		return err
+	}
+	result := savedFiles{Saved: saved}
+	return c.Print(result, func(w io.Writer) { renderSaved(w, saved) })
 }
 
-// downloadAll saves every attachment into --dir. It looks at every path
-// before it fetches the first file, so that a file that is there already
-// stops the run before anything is written.
-func (a *App) downloadAll(ctx context.Context, c *ctlkit.Call, p *artifik.Procurement) error {
-	dir := c.String("dir")
-	if info, err := os.Stat(dir); err != nil || !info.IsDir() {
-		return ctlkit.Usagef("--dir %s is not a directory", dir)
+func renderSaved(w io.Writer, saved []ctlkit.SavedFile) {
+	for _, s := range saved {
+		fmt.Fprintf(w, "Saved %s (%d bytes, %s).\n", s.Path, s.Bytes, s.ContentType)
 	}
-	paths := make([]string, len(p.Files))
+}
+
+// saveInto saves attachments into dir, which it makes when it is not there.
+// It looks at every path before it fetches the first file, so that a file
+// that is there already stops the run before anything is written.
+func (a *App) saveInto(ctx context.Context, dir string, id int, files []artifik.File) ([]ctlkit.SavedFile, error) {
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return nil, ctlkit.Usagef("--dir %s cannot be made: %v", dir, err)
+	}
+	paths := make([]string, len(files))
 	seen := map[string]bool{}
-	for i, file := range p.Files {
+	for i, file := range files {
 		path := filepath.Join(dir, ctlkit.FileName(file.Name, nil))
 		if seen[path] {
-			return ctlkit.Errorf(ctlkit.KindConflict, "two attachments would both be saved as %s", path).WithHint("save them one at a time with --output.")
+			return nil, ctlkit.Errorf(ctlkit.KindConflict, "two attachments would both be saved as %s", path).WithHint("save them one at a time with --output.")
 		}
 		seen[path] = true
 		if _, err := os.Stat(path); err == nil {
-			return ctlkit.Errorf(ctlkit.KindConflict, "%s exists already", path).WithHint("give another --dir.")
+			return nil, ctlkit.Errorf(ctlkit.KindConflict, "%s exists already", path).WithHint("give another --dir.")
 		} else if !errors.Is(err, fs.ErrNotExist) {
-			return err
+			return nil, err
 		}
 		paths[i] = path
 	}
 
-	result := savedFiles{Saved: []ctlkit.SavedFile{}}
-	for i, file := range p.Files {
-		data, err := a.Client.Download(ctx, p.ID, file.Name)
+	saved := []ctlkit.SavedFile{}
+	for i, file := range files {
+		data, err := a.Client.Download(ctx, id, file.Name)
 		if err != nil {
-			return fmt.Errorf("%s (saved %d of %d before it): %w", file.Name, len(result.Saved), len(p.Files), err)
+			return nil, fmt.Errorf("%s (saved %d of %d before it): %w", file.Name, len(saved), len(files), err)
 		}
 		if err := writeNew(paths[i], data); err != nil {
-			return err
+			return nil, err
 		}
-		result.Saved = append(result.Saved, ctlkit.SavedFile{Path: paths[i], Bytes: len(data), ContentType: ctlkit.ContentType(paths[i], data)})
+		saved = append(saved, ctlkit.SavedFile{Path: paths[i], Bytes: len(data), ContentType: ctlkit.ContentType(paths[i], data)})
 	}
-	return c.Print(result, func(w io.Writer) {
-		for _, saved := range result.Saved {
-			fmt.Fprintf(w, "Saved %s (%d bytes, %s).\n", saved.Path, saved.Bytes, saved.ContentType)
-		}
-	})
+	return saved, nil
 }
 
 // writeNew writes a file that must not exist.

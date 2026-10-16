@@ -20,6 +20,7 @@ type node struct {
 	Content []node `json:"content"`
 	Attrs   struct {
 		Type   string `json:"type"`
+		Level  int    `json:"level"`
 		Config struct {
 			Required bool `json:"required"`
 		} `json:"config"`
@@ -29,7 +30,13 @@ type node struct {
 // docText writes a smart doc as plain text: a line for each paragraph and
 // heading, "- " before each list item, and a line that says what a request
 // asks the supplier for.
-func docText(doc *smartDoc) string {
+func docText(doc *smartDoc) string { return render(doc, false) }
+
+// docMarkdown writes a long smart doc as Markdown: headings keep their
+// level, one below the page's own title, and a blank line parts the blocks.
+func docMarkdown(doc *smartDoc) string { return render(doc, true) }
+
+func render(doc *smartDoc, markdown bool) string {
 	if doc == nil || doc.DocJSON == nil {
 		return ""
 	}
@@ -50,6 +57,15 @@ func docText(doc *smartDoc) string {
 				}
 				block(c, p)
 			}
+		case "heading":
+			line := strings.TrimSpace(inline(n.Content))
+			if line == "" {
+				return
+			}
+			if markdown {
+				line = strings.Repeat("#", min(max(n.Attrs.Level, 1)+1, 6)) + " " + line
+			}
+			lines = append(lines, line)
 		case "request":
 			what := map[string]string{"files": "upload files", "text": "answer in text", "task": "a task"}[n.Attrs.Type]
 			if what == "" {
@@ -73,6 +89,9 @@ func docText(doc *smartDoc) string {
 		}
 	}
 	block(*doc.DocJSON, "")
+	if markdown {
+		return strings.Join(lines, "\n\n")
+	}
 	return strings.Join(lines, "\n")
 }
 
