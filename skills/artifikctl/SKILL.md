@@ -29,10 +29,14 @@ Artifik's list is not in deadline order, and the order can change between runs. 
 artifikctl procurement <procurement-id>     # deadlines, qualification requirements, award criteria, specification, attachments
 artifikctl procurement https://app.artifik.no/procurements/<procurement-id>   # a link to the page works as the id
 artifikctl questions <procurement-id>       # the public questions and answers
-artifikctl document <procurement-id>        # the competition document: procedure, evaluation model, what to hand in
+artifikctl document <procurement-id> --toc          # the headings of the competition document
+artifikctl document <procurement-id> --section 6.3  # one part of it, with the parts under it
+artifikctl document <procurement-id>                # all of it: procedure, evaluation model, what to hand in
 ```
 
-Each qualification requirement has its text and, under "Documentation", what the supplier has to hand in to prove it. When an attachment or the specification points to "konkurransedetaljene" or "KGV punkt N", that is the competition document: read it with `document`, which can be 20 000 characters, so use `--json` and search the `text`. `procurement` says when there is one.
+Each qualification requirement has its text and, under "Documentation", what the supplier has to hand in to prove it. When an attachment or the specification points to "konkurransedetaljene" or "KGV punkt N", that is the competition document. It can be 20 000 characters, so start with `--toc` and read the parts you need with `--section`. `procurement` says when there is one. The text is quoted with `> `, since it is the buyer's: its headings are `> ## ...`.
+
+Fields that say "by the buyer" or "in the buyer's words" are what the buyer wrote, not checked by the tool.
 
 `procurement` ends with how many public questions there are. Read them with `questions` before you assess a tender: the answers often change or explain a requirement. In the specification, a line that starts with "[Supplier to give: ...]" is something the supplier has to upload or answer in Artifik.
 

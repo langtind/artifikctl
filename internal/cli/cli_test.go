@@ -109,7 +109,7 @@ const detail = `{"procurement":{"id":101,"name":"Snow clearing","type":"COMPETIT
 	"description":"<p>Clearing</p>","organization":{"id":"org-a","name":"Made-up Municipality"},
 	"currentDeadline":{"date":"2026-11-01T11:00:00.000Z","type":"submission"},"total_value":2400000,"currency":"NOK",
 	"cpv_codes":{"main_cpv":"90620000","aditional_cpv":["90630000"]},"performance_places":["NO081"],"externalReferenceUrl":null,
-	"estimatedContractStartDate":"2027-01-31T23:00:00.000Z","reduce_participants_by_selection_criteria":"__YES__","suppliersLimitReason":"See 5.2",
+	"estimatedContractStartDate":"2027-01-31T23:00:00.000Z","reduce_participants_by_selection_criteria":"__YES__","suppliersLimitReason":"See section 6.3 of the rules",
 	"procurementInformationSmartDoc":{"id":3,"version":1,"docJSON":{"type":"doc","content":[
 		{"type":"heading","attrs":{"level":1},"content":[{"type":"text","text":"6 Evaluation"}]},
 		{"type":"heading","attrs":{"level":2},"content":[{"type":"text","text":"6.3 Weighting"}]},
@@ -313,12 +313,12 @@ func TestAProcurementInFull(t *testing.T) {
 	for _, want := range []string{
 		"# Snow clearing\n\nid: 101\nBuyer: Made-up Municipality\n",
 		"Estimated value: 2 400 000 NOK\nMain CPV: 90620000\nOther CPV: 90630000\nPlaces: NO081\n",
-		"How many are invited: See 5.2\nPage: https://app.artifik.no/procurements/101\n",
+		"\nPage: https://app.artifik.no/procurements/101\n",
 		"## About\n\n> Clearing\n",
 		"## Timeline\n\n- SUBMISSION: 2026-11-01T13:00:00+02:00\n",
 		"### Lot 1: North\n\nDuration: 24 months\nEstimated value: 1 200 000\n\n> North side\n",
 		"#### Qualification requirements\n\n1. Company registration (slc-suit-reg-trade), documentation required\n   Documentation:\n\n   > A certificate not older than 6 months\n",
-		"Contract start: 2027-02-01T01:00:00+02:00\nInvites: a selection of the qualified suppliers\nHow many are invited: See 5.2\n",
+		"Estimated contract start, by the buyer: 2027-02-01T01:00:00+02:00\nInvites: a selection of the qualified suppliers\nHow many, in the buyer's words: \"See section 6.3 of the rules\" (read it: \"artifikctl document 101 --section 6.3\")\n",
 		"## Competition document\n\nThe rules, the evaluation model and what to hand in are in the competition document. Read it with \"artifikctl document 101\".\n",
 		"#### Award criteria\n\n- Price: 40 %, price\n- Quality: 60 %, quality\n",
 		"#### Specification\n\n> Documents\n> - a plan\n> [Supplier to give: upload files, required] Upload the plan\n",
@@ -383,10 +383,37 @@ func TestTheCompetitionDocument(t *testing.T) {
 		t.Errorf("exit = %d, stdout = %q", code, stdout)
 	}
 	_, stdout, _ = h.run("", "document", "101", "--json")
-	var doc artifik.Document
+	var doc documentView
 	ctltest.OneJSON(t, stdout, &doc)
-	if doc.ID != 101 || doc.Asks != 1 || !strings.HasPrefix(doc.Text, "## 6 Evaluation\n\n### 6.3") {
+	if doc.ID != 101 || doc.Asks != 1 || !strings.HasPrefix(doc.Text, "## 6 Evaluation\n\n### 6.3") || len(doc.Headings) != 2 || doc.Headings[1] != (heading{Level: 2, Title: "6.3 Weighting"}) {
 		t.Errorf("doc = %+v", doc)
+	}
+
+	code, stdout, _ = h.run("", "document", "101", "--toc")
+	if code != 0 || !strings.Contains(stdout, "- 6 Evaluation\n  - 6.3 Weighting\n") || strings.Contains(stdout, "Quality counts") {
+		t.Errorf("--toc: exit = %d, stdout = %q", code, stdout)
+	}
+	code, stdout, _ = h.run("", "document", "101", "--section", "6.3")
+	if code != 0 || !strings.HasPrefix(stdout, "# Competition document: Snow clearing\n\n> ### 6.3 Weighting\n") || strings.Contains(stdout, "6 Evaluation") {
+		t.Errorf("--section: exit = %d, stdout = %q", code, stdout)
+	}
+	if code, _, stderr := h.run("", "document", "101", "--section", "7"); code != 3 || !strings.Contains(stderr, "--toc") {
+		t.Errorf("an unknown section: exit = %d, stderr = %q", code, stderr)
+	}
+}
+
+func TestASectionEndsAtTheNextHeadingAtItsLevel(t *testing.T) {
+	text := "## 6 Evaluation\n\n### 6.3 Weighting\n\nA\n\n#### 6.3.1 Price\n\nB\n\n### 6.30 Other\n\nC\n\n## 7 Contract"
+	if got, ok := section(text, "6.3"); !ok || got != "### 6.3 Weighting\n\nA\n\n#### 6.3.1 Price\n\nB" {
+		t.Errorf("6.3 = %q", got)
+	}
+	if got, _ := section(text, "6"); !strings.HasSuffix(got, "C") {
+		t.Errorf("6 = %q", got)
+	}
+	for number, want := range map[string]bool{"6.3": true, "6.3.1": true, "6.31": false, "7": true, "8": false} {
+		if _, ok := section(text, number); ok != want {
+			t.Errorf("%s: found = %t", number, ok)
+		}
 	}
 }
 

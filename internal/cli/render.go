@@ -83,12 +83,21 @@ func (a *App) renderProcurement(w io.Writer, page procurementPage) {
 		line(w, "Places", strings.Join(p.Places, ", "))
 	}
 	if p.ContractStart != "" {
-		line(w, "Contract start", a.local(p.ContractStart))
+		line(w, "Estimated contract start, by the buyer", a.local(p.ContractStart))
 	}
 	if p.ReducesParticipants {
 		line(w, "Invites", "a selection of the qualified suppliers")
 	}
-	line(w, "How many are invited", p.LimitReason)
+	if p.LimitReason != "" {
+		more := ""
+		switch {
+		case p.LimitSection != "":
+			more = fmt.Sprintf(` (read it: "%s document %d --section %s")`, Name, p.ID, p.LimitSection)
+		case p.HasDocument:
+			more = fmt.Sprintf(` (the competition document may say more: "%s document %d")`, Name, p.ID)
+		}
+		line(w, "How many, in the buyer's words", fmt.Sprintf("%q%s", oneLine(p.LimitReason), more))
+	}
 	line(w, "External id", p.ExternalID)
 	line(w, "External page", p.ExternalURL)
 	line(w, "Page", p.URL)

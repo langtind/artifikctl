@@ -275,6 +275,9 @@ type Procurement struct {
 	// suppliers when more qualify than it invites, and LimitReason says how.
 	ReducesParticipants bool   `json:"reducesParticipants"`
 	LimitReason         string `json:"limitReason,omitempty"`
+	// LimitSection is the section of the competition document LimitReason
+	// points to, when the document has it.
+	LimitSection string `json:"limitSection,omitempty"`
 	// HasDocument says the procurement has a competition document, which
 	// Client.Document reads.
 	HasDocument bool    `json:"hasDocument"`
@@ -337,7 +340,11 @@ func (w procurementWire) procurement() *Procurement {
 		p.LimitReason = text(*w.LimitReason)
 	}
 	p.ReducesParticipants = w.ReduceBySelection == "__YES__"
-	p.HasDocument = docMarkdown(rawDoc(w.InformationDoc)) != ""
+	document := docMarkdown(rawDoc(w.InformationDoc))
+	p.HasDocument = document != ""
+	if m := sectionNumber.FindString(p.LimitReason); m != "" && hasSection(document, m) {
+		p.LimitSection = m
+	}
 	for _, e := range w.Timeline {
 		p.Timeline = append(p.Timeline, Event(e))
 	}

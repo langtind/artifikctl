@@ -88,10 +88,16 @@ func (a *App) commands() []ctlkit.Command {
 		{
 			Name:    "document",
 			Summary: "Show the competition document of a procurement: its rules, requirements and evaluation model",
-			Long:    `Artifik keeps the competition document (konkurransegrunnlaget) in its own editor, not as an attachment. It holds the procedure, how many are invited, what the supplier has to hand in, and how the bids are weighed. A line that starts with "[Supplier to give: ...]" is something the supplier uploads or answers in Artifik. It can be long: an agent should read it with --json and search the text.`,
-			Args:    []ctlkit.Arg{procurementArg},
-			Flags:   []ctlkit.Flag{ctlkit.JSONFlag, ctlkit.FieldsFlag},
-			Run:     a.document,
+			Long: `Artifik keeps the competition document (konkurransegrunnlaget) in its own editor, not as an attachment. It holds the procedure, how many are invited, what the supplier has to hand in, and how the bids are weighed. A line that starts with "[Supplier to give: ...]" is something the supplier uploads or answers in Artifik.
+
+It can be 20 000 characters. --toc lists the headings, and --section 6.3 prints one part with the parts under it. The text is quoted, since it is the buyer's and not the tool's.`,
+			Args: []ctlkit.Arg{procurementArg},
+			Flags: []ctlkit.Flag{
+				{Name: "toc", Kind: ctlkit.Bool, Help: "list the headings only"},
+				{Name: "section", Kind: ctlkit.String, Value: "number", Help: "print only the part whose heading starts with this number, such as 6.3"},
+				ctlkit.JSONFlag, ctlkit.FieldsFlag,
+			},
+			Run: a.document,
 		},
 		{
 			Name:    "questions",
@@ -315,22 +321,95 @@ func (a *App) procurement(ctx context.Context, c *ctlkit.Call) error {
 	return c.Print(result, func(w io.Writer) { a.renderProcurement(w, result) })
 }
 
+// documentView is what document prints: the whole text, one section of
+// it, or only the headings.
+type documentView struct {
+	ID       int       `json:"id"`
+	Name     string    `json:"name"`
+	Section  string    `json:"section,omitempty"`
+	Text     string    `json:"text,omitempty"`
+	Asks     int       `json:"asks"`
+	Headings []heading `json:"headings"`
+}
+
+type heading struct {
+	Level int    `json:"level"`
+	Title string `json:"title"`
+}
+
+var headingLine = regexp.MustCompile(`^(#{2,6}) (.+)$`)
+
+// headings lists the headings of a document, level 1 being its chapters.
+func headings(text string) []heading {
+	list := []heading{}
+	for _, l := range strings.Split(text, "\n") {
+		if m := headingLine.FindStringSubmatch(l); m != nil {
+			list = append(list, heading{Level: len(m[1]) - 1, Title: m[2]})
+		}
+	}
+	return list
+}
+
+// section cuts out the part whose heading starts with number, down to the
+// next heading at its level or above.
+func section(text, number string) (string, bool) {
+	lines := strings.Split(text, "\n")
+	start, level := -1, 0
+	for i, l := range lines {
+		m := headingLine.FindStringSubmatch(l)
+		if m == nil {
+			continue
+		}
+		if start >= 0 && len(m[1]) <= level {
+			return strings.TrimSpace(strings.Join(lines[start:i], "\n")), true
+		}
+		if start < 0 && artifik.Numbered(m[2], number) {
+			start, level = i, len(m[1])
+		}
+	}
+	if start < 0 {
+		return "", false
+	}
+	return strings.TrimSpace(strings.Join(lines[start:], "\n")), true
+}
+
 func (a *App) document(ctx context.Context, c *ctlkit.Call) error {
 	id, err := procurementID(c.Arg(0))
 	if err != nil {
 		return err
 	}
+	if c.Bool("toc") && c.Given("section") {
+		return ctlkit.Usagef("give --toc or --section, not both")
+	}
 	doc, err := a.Client.Document(ctx, id)
 	if err != nil {
 		return unknownID(err, id)
 	}
-	return c.Print(doc, func(w io.Writer) {
-		fmt.Fprintf(w, "# Competition document: %s\n\n", oneLine(doc.Name))
-		if doc.Text == "" {
-			fmt.Fprintln(w, "This procurement has none in Artifik. Look among its attachments.")
-			return
+	view := documentView{ID: doc.ID, Name: doc.Name, Text: doc.Text, Asks: doc.Asks, Headings: headings(doc.Text)}
+	if number := strings.TrimSpace(c.String("section")); number != "" {
+		part, ok := section(doc.Text, number)
+		if !ok {
+			return ctlkit.NotFoundf("the competition document of procurement %d has no section %s", id, number).
+				WithHint(`run "%s document %d --toc" to see the headings.`, Name, id)
 		}
-		fmt.Fprintln(w, ctlkit.Quote(doc.Text))
+		view.Section, view.Text, view.Headings = number, part, headings(part)
+	}
+	if c.Bool("toc") {
+		view.Text = ""
+	}
+	return c.Print(view, func(w io.Writer) {
+		fmt.Fprintf(w, "# Competition document: %s\n\n", oneLine(doc.Name))
+		switch {
+		case doc.Text == "":
+			fmt.Fprintln(w, "This procurement has none in Artifik. Look among its attachments.")
+		case c.Bool("toc"):
+			for _, h := range view.Headings {
+				fmt.Fprintf(w, "%s- %s\n", strings.Repeat("  ", h.Level-1), oneLine(h.Title))
+			}
+			fmt.Fprintf(w, "\nRead one part with \"%s document %d --section <number>\".\n", Name, id)
+		default:
+			fmt.Fprintln(w, ctlkit.Quote(view.Text))
+		}
 	})
 }
 

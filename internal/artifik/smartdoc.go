@@ -2,8 +2,30 @@ package artifik
 
 import (
 	"encoding/json"
+	"regexp"
 	"strings"
 )
+
+// sectionNumber finds a section number such as 5.2 in a buyer's text.
+var sectionNumber = regexp.MustCompile(`\b[0-9]+(\.[0-9]+)+\b`)
+
+// hasSection says whether a document from docMarkdown has a heading that
+// carries number.
+func hasSection(document, number string) bool {
+	for _, line := range strings.Split(document, "\n") {
+		if title, ok := strings.CutPrefix(strings.TrimLeft(line, "#"), " "); ok && strings.HasPrefix(line, "#") && Numbered(title, number) {
+			return true
+		}
+	}
+	return false
+}
+
+// Numbered says whether a heading carries the number: "6.3 Weighting" and
+// "6.3. Weighting" do for 6.3, and "6.3.1 Price" and "6.30 Other" do not.
+func Numbered(title, number string) bool {
+	rest, ok := strings.CutPrefix(strings.TrimSpace(title), number)
+	return ok && (rest == "" || strings.HasPrefix(rest, " ") || strings.HasPrefix(rest, ". ") || rest == ".")
+}
 
 // Artifik writes requirements and specifications as "smart docs": ProseMirror
 // documents in JSON, with Artifik's own "request" node where the supplier is
